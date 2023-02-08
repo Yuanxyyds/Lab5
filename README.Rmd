@@ -89,8 +89,19 @@ Once you are done setting up the project, you can now start working with the MET
 ## Setup in R
 
 1. Load the `data.table` (and the `dtplyr` and `dplyr` packages if you plan to work with those).
+```{r setup, message=FALSE, warning=FALSE}
+library(data.table)
+library(dplyr)
+library(tidyverse)
+```
 
 2. Load the met data from https://github.com/JSC370/jsc370-2023/blob/main/labs/lab03/met_all.gz or  (Use https://raw.githubusercontent.com/JSC370/jsc370-2023/main/labs/lab03/met_all.gz to download programmatically), and also the station data. For the latter, you can use the code we used during lecture to pre-process the stations data:
+```{r checking-file}
+fn <- "https://raw.githubusercontent.com/JSC370/jsc370-2023/main/labs/lab03/met_all.gz"
+if (!file.exists("met_all.gz"))
+  download.file(fn, destfile = "met_all.gz")
+met <- data.table::fread("met_all.gz")
+```
 
 ```{r stations-data, eval = FALSE}
 # Download the data
@@ -115,12 +126,71 @@ stations <- stations[n == 1,][, n := NULL]
 
 3. Merge the data as we did during the lecture.
 
+```{r}
+dat <- merge(
+  x = stations,
+  y = met,
+  by.x = "USAF",
+  by.y = "USAFID",
+  all.x = FALSE,
+  all.y = TRUE
+)
+```
+
+
 ## Question 1: Representative station for the US
 
 Across all weather stations, what is the median station in terms of temperature, wind speed, and atmospheric pressure? Look for the three weather stations that best represent continental US using the `quantile()` function. Do these three coincide?
 
 ```{r}
+dat_avg <- dat[, .(temp_avg = mean(temp, na.rm=TRUE),
+       wind.sp_avg = mean(wind.sp, na.rm=TRUE),
+       atm.press_avg = mean(atm.press, na.rm = TRUE)), by = "USAF"]
+```
 
+```{r, eval=FALSE}
+# Alternative
+dat_avg <- dat %>% 
+  group_by("USAF") %>% 
+  summarise(
+    across(
+      c(temp,wind.sp,atm.press),
+      function(x) mean(x, na.rm = TRUE)
+    )
+  )
+```
+
+```{r, eval=FALSE}
+summary(dat_avg)
+```
+```{r}
+med <- dat_avg %>% 
+  summarise(across(2:4,
+            function(x) quantile(x, probs = .5, na.rm=TRUE)))
+```
+
+```{r}
+# Best Wind Speed
+dat_avg[dat_avg$wind.sp_avg == med$wind.sp_avg,]
+```
+```{r}
+# Best Temp
+dat_avg %>% 
+  mutate(temp_diff = abs(temp_avg - med %>% pull(temp_avg))) %>% 
+  arrange(temp_diff) %>% 
+  slice(1)
+```
+```{r}
+# Best Atm Press
+dat_avg %>% 
+  mutate(temp_diff = abs(atm.press_avg - med %>% pull(atm.press_avg))) %>% 
+  arrange(temp_diff) %>% 
+  slice(1)
+```
+```{r}
+dat %>% select(USAF, lon, lat) %>% 
+  distinct() %>% 
+  filter(USAF %in% c(720929, 720458, 723200))
 ```
 
 Knit the document, commit your changes, and save it on GitHub. Don't forget to add `README.md` to the tree, the first time you render it.
@@ -131,7 +201,12 @@ Just like the previous question, you are asked to identify what is the most repr
 
 ```{r}
 
+state_avg <- dat[, .(temp_med = median(temp, na.rm=TRUE),
+       wind.sp_med = median(wind.sp, na.rm=TRUE),
+       atm.press_med = median(atm.press, na.rm = TRUE)), by = "STATE"]
 ```
+
+
 
 Knit the doc and save it on GitHub.
 
