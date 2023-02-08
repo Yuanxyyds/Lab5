@@ -1,9 +1,9 @@
 ---
 title: "Lab 05 - Data Wrangling"
 output: 
-  github_document: default
   tufte::tufte_html:
     css: style.css
+  github_document: default
 link-citations: yes
 ---
 
@@ -93,6 +93,7 @@ Once you are done setting up the project, you can now start working with the MET
 library(data.table)
 library(dplyr)
 library(tidyverse)
+library(leaflet)
 ```
 
 2. Load the met data from https://github.com/JSC370/jsc370-2023/blob/main/labs/lab03/met_all.gz or  (Use https://raw.githubusercontent.com/JSC370/jsc370-2023/main/labs/lab03/met_all.gz to download programmatically), and also the station data. For the latter, you can use the code we used during lecture to pre-process the stations data:
@@ -103,7 +104,7 @@ if (!file.exists("met_all.gz"))
 met <- data.table::fread("met_all.gz")
 ```
 
-```{r stations-data, eval = FALSE}
+```{r stations-data}
 # Download the data
 stations <- fread("ftp://ftp.ncdc.noaa.gov/pub/data/noaa/isd-history.csv")
 stations[, USAF := as.integer(USAF)]
@@ -145,7 +146,9 @@ Across all weather stations, what is the median station in terms of temperature,
 ```{r}
 dat_avg <- dat[, .(temp_avg = mean(temp, na.rm=TRUE),
        wind.sp_avg = mean(wind.sp, na.rm=TRUE),
-       atm.press_avg = mean(atm.press, na.rm = TRUE)), by = "USAF"]
+       atm.press_avg = mean(atm.press, na.rm = TRUE),
+       lat_avg = mean(lat, na.rm = TRUE),
+       lon_avg = mean(lon, na.rm = TRUE)), by = "USAF"]
 ```
 
 ```{r, eval=FALSE}
@@ -154,7 +157,7 @@ dat_avg <- dat %>%
   group_by("USAF") %>% 
   summarise(
     across(
-      c(temp,wind.sp,atm.press),
+      c(temp,wind.sp,atm.press, lon, lat),
       function(x) mean(x, na.rm = TRUE)
     )
   )
@@ -200,10 +203,57 @@ Knit the document, commit your changes, and save it on GitHub. Don't forget to a
 Just like the previous question, you are asked to identify what is the most representative, the median, station per state. This time, instead of looking at one variable at a time, look at the euclidean distance. If multiple stations show in the median, select the one located at the lowest latitude.
 
 ```{r}
-
 state_avg <- dat[, .(temp_med = median(temp, na.rm=TRUE),
        wind.sp_med = median(wind.sp, na.rm=TRUE),
        atm.press_med = median(atm.press, na.rm = TRUE)), by = "STATE"]
+```
+
+```{r}
+# Add State For each station
+dat_avg_state <- merge(
+  x = dat_avg,
+  y = dat[, c("USAF", "STATE")],
+  by.x = "USAF",
+  by.y = "USAF",
+  all.x = TRUE,
+  all.y = FALSE
+)
+dat_avg_state <- dat_avg_state %>% distinct()
+
+# Merge with average temperature
+dat_avg_with_state_mean <- merge(
+  x = dat_avg_state,
+  y = state_avg,
+  by.x = "STATE",
+  by.y = "STATE",
+  all.x = TRUE,
+  all.y = FALSE
+)
+```
+
+```{r}
+dis <- function(A, B, C, meanA, meanB, meanC) {
+  result <- sqrt((A - meanA)^2 + (B - meanB)^2 + (C - meanC)^2)
+  return(result)
+}
+# Add diff
+dat_avg_with_state_mean <- dat_avg_with_state_mean %>% 
+  mutate(diff = dis(temp_avg, wind.sp_avg, atm.press_avg, temp_med, wind.sp_med, atm.press_med))
+
+best_station <- dat_avg_with_state_mean %>% group_by(STATE) %>%
+  summarise(diff = min(diff, na.rm = TRUE))
+
+# Result
+q2 <- merge(
+  x = dat_avg_with_state_mean,
+  y = best_station,
+  by.x = c("diff", "STATE"),
+  by.y = c("diff", "STATE"),
+  all.x = FALSE,
+  all.y = FALSE
+)
+
+q2 %>% select(STATE, USAF)
 ```
 
 
@@ -215,7 +265,53 @@ Knit the doc and save it on GitHub.
 For each state, identify what is the station that is closest to the mid-point of the state. Combining these with the stations you identified in the previous question, use `leaflet()` to visualize all ~100 points in the same figure, applying different colors for those identified in this question.
 
 ```{r}
+state_mid <- dat[, .(lon = mean(lon, na.rm=TRUE),
+       lat = mean(lat, na.rm=TRUE)), by = "STATE"]
 
+
+# Merge with mid position of state
+dat_avg_with_state_mean_position <- merge(
+  x = dat_avg_state,
+  y = state_mid,
+  by.x = "STATE",
+  by.y = "STATE",
+  all.x = TRUE,
+  all.y = FALSE
+)
+```
+
+```{r}
+dis2 <- function(A, B, meanA, meanB) {
+  result <- sqrt((A - meanA)^2 + (B - meanB)^2)
+  return(result)
+}
+# Add diff
+dat_avg_with_state_mean_position <- dat_avg_with_state_mean_position %>% 
+  mutate(diff = dis2(lat_avg, lon_avg, lat, lon))
+
+closest_station <- dat_avg_with_state_mean_position %>% group_by(STATE) %>%
+  summarise(diff = min(diff, na.rm = TRUE))
+
+# Result
+q3 <- merge(
+  x = dat_avg_with_state_mean_position,
+  y = closest_station,
+  by.x = c("diff", "STATE"),
+  by.y = c("diff", "STATE"),
+  all.x = FALSE,
+  all.y = FALSE
+)
+
+
+q3 %>% select(STATE, USAF, lat_avg, lon_avg)
+```
+
+```{r}
+# Marker is Center, Circle is Best Station in Q2
+leaflet() %>% 
+  addProviderTiles("OpenStreetMap") %>% 
+  addCircles(lat=~lat_avg, lng=~lon_avg, color = "BLUE", data = q2) %>% 
+  addMarkers(lat=~lat_avg, lng=~lon_avg, data = q3) 
 ```
 
 Knit the doc and save it on GitHub.
@@ -231,6 +327,12 @@ Start by computing the states' average temperature. Use that measurement to clas
 - High: temp >= 25
 
 ```{r}
+new_dat <- dat[, .(temp_avg = mean(temp, na.rm = TRUE),
+        wind.sp_avg = mean(wind.sp, na.rm = TRUE),
+        atm.press_avg = mean(atm.press, na.rm = TRUE)),by = STATE]
+new_dat <- new_dat[,label := case_when(temp_avg < 20 ~ "low", temp_avg >= 20 & temp_avg < 25 ~ "mid",
+                          TRUE ~ "High")]
+
 
 ```
 
@@ -245,6 +347,13 @@ Once you are done with that, you can compute the following:
 All by the levels described before.
 
 ```{r}
+table(new_dat$label)
+new_dat %>% group_by(label) %>% 
+  summarise(n_state = n(),
+            mean_wind = quantile(wind.sp_avg, probs = .5, na.rm=TRUE),
+            mean_atm = quantile(atm.press_avg, probs = .5, na.rm=TRUE),
+            mean_temp = quantile(temp_avg, probs = .5, na.rm=TRUE),
+            )
 
 ```
 
@@ -260,5 +369,19 @@ Let's practice running regression models with smooth functions on X. We need the
 - fit both a linear model and a spline model (use `gam()` with a cubic regression spline on wind speed). Summarize and plot the results from the models and interpret which model is the best fit and why.
 
 ```{r}
-
+library(mgcv)
+library(gam)
 ```
+```{r}
+dat_med <- dat[, .(temp_med = median(temp, na.rm = TRUE),
+        wind.sp_med = median(wind.sp, na.rm = TRUE),
+        atm.press_med = median(atm.press, na.rm = TRUE)),by = USAF]
+dat_med %>% ggplot(aes(x = wind.sp_med, y = temp_med)) + geom_point() + 
+  geom_smooth(method = "lm") + geom_smooth(color = "RED") + labs(title = "Scatterplot + Linear Line + Smooth Line")
+
+linear <- lm(temp_med ~ wind.sp_med ,data = dat_med)
+gam_co <- gam(temp_med ~ s(wind.sp_med,5) ,data = dat_med)
+anova(linear, gam_co)
+```
+
+Both models have the similar shape of the output line. The one with Splines perform better as it has less RSS.
